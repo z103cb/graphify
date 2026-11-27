@@ -3700,6 +3700,33 @@ def _normalize_cpp_export_macros(source: bytes) -> bytes:
     return _CPP_EXPORT_MACRO_RE.sub(repl, source)
 
 
+# A ``#define`` continued over several lines with backslashes. tree-sitter-cpp
+# ends the macro body at a ``/* ... */`` comment and then fails on the
+# remaining ``\`` continuation, so the file is reported as having syntax
+# errors although every symbol after the macro is still extracted (#5551).
+_CPP_MULTILINE_DEFINE_RE = re.compile(
+    rb"^[ \t]*#[ \t]*define\b(?:[^\n]*\\\r?\n)+[^\n]*", re.MULTILINE
+)
+_CPP_SINGLE_LINE_BLOCK_COMMENT_RE = re.compile(rb"/\*[^\r\n]*?\*/")
+
+
+def _normalize_cpp_define_comments(source: bytes) -> bytes:
+    """Blank ``/* ... */`` comments inside a backslash-continued ``#define``.
+
+    Byte-length and newline preserving, like the other C++ normalizers, so
+    offsets, lines and columns are unchanged. Only comments that open and
+    close on one line are handled; a comment spanning several continued lines
+    is left alone. The match is not string-literal aware, so a ``/* ... */``
+    inside a string on a macro line is blanked too (the macro body itself is
+    not extracted, so this does not change the graph).
+    """
+
+    def blank_comments(m: "re.Match[bytes]") -> bytes:
+        return _CPP_SINGLE_LINE_BLOCK_COMMENT_RE.sub(_blank_keeping_newlines, m.group(0))
+
+    return _CPP_MULTILINE_DEFINE_RE.sub(blank_comments, source)
+
+
 _CPP_CONDITIONAL_TOKEN_RE = re.compile(
     rb'//(?:\\\r?\n|[^\r\n])*|/\*[\s\S]*?(?:\*/|\Z)'
     rb"|\b[0-9](?:[A-Za-z_0-9.]|'[A-Za-z_0-9])*"
@@ -4033,6 +4060,7 @@ def extract_cpp(path: Path) -> dict:
         return _augment_cpp_string_tests(path, _extract_generic(path, _CPP_CONFIG))
     source_override = _normalize_cpp_cli(source) or source
     source_override = _normalize_cpp_export_macros(source_override)
+    source_override = _normalize_cpp_define_comments(source_override)
     result = _extract_generic(
         path, _CPP_CONFIG, source_override=source_override
     )
