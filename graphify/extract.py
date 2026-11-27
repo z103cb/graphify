@@ -3658,10 +3658,24 @@ _CPP_EXPORT_MACRO_RE = re.compile(
 )
 
 
-def _normalize_cpp_export_macros(source: bytes) -> bytes:
-    """Blank an export macro between ``class``/``struct`` and the type name.
+# Export macro (``MYLIB_EXPORT``, ``FOO_API`` ...) leading a free-function or
+# variable declaration, e.g. ``MYLIB_EXPORT uint64_t f(...)``. tree-sitter-cpp
+# cannot parse a bare macro before a plain return type. Narrower than the
+# class/struct pattern on purpose: a line-leading ALL-CAPS token is often real
+# code, so only names ending in ``EXPORT`` or ``_API`` match.
+_CPP_EXPORT_DECL_MACRO_RE = re.compile(
+    rb"(^[ \t]*)([A-Z][A-Z0-9_]*(?:EXPORT|_API)[ \t]+)(?=[A-Za-z_:])",
+    re.MULTILINE,
+)
 
-    Single ALL-CAPS identifier macros (and stacked ones) are handled.
+
+def _normalize_cpp_export_macros(source: bytes) -> bytes:
+    """Blank an export macro between ``class``/``struct`` and the type name,
+    or leading a free-function/variable declaration (``MYLIB_EXPORT int f();``).
+
+    Single ALL-CAPS identifier macros (and stacked ones) are handled. The
+    declaration form only matches names ending in ``EXPORT`` or ``_API``
+    (e.g. ``FOO_DLL`` is not covered), and only at the start of a line.
     Note: paren-attribute macros like ``__declspec(dllexport)`` and
     ``__attribute__((visibility("default")))`` are currently unsupported,
     as well as template specializations (e.g. ``template<> class MODULE_API Widget<int>``).
@@ -3697,6 +3711,9 @@ def _normalize_cpp_export_macros(source: bytes) -> bytes:
 
         return m.group(1) + bytes(blanked_macro) + m.group(3) + m.group(4)
 
+    source = _CPP_EXPORT_DECL_MACRO_RE.sub(
+        lambda m: m.group(1) + re.sub(rb"[^\r\n]", b" ", m.group(2)), source
+    )
     return _CPP_EXPORT_MACRO_RE.sub(repl, source)
 
 

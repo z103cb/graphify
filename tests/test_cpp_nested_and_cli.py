@@ -470,3 +470,30 @@ def test_cpp_export_macro_all_caps_class_final(tmp_path):
     labels = [n["label"] for n in result["nodes"]]
     assert "MY_WIDGET" in labels, "MY_WIDGET was stripped as a macro!"
     assert "Foo" in labels
+
+
+def test_cpp_export_macro_before_function_declaration(tmp_path):
+    """`MYLIB_EXPORT uint64_t f(int);` is not a syntax error."""
+    p = tmp_path / "decl.hpp"
+    p.write_text("#pragma once\n#include <cstdint>\n\nMYLIB_EXPORT uint64_t compute(int x);\n\nvoid plain();\n")
+    assert extract_cpp(p).get("parse_errors") is None
+
+
+def test_cpp_export_macro_before_definition_is_not_a_node(tmp_path):
+    p = tmp_path / "defn.cpp"
+    p.write_text(
+        "#include <cstdint>\n\nMYLIB_EXPORT uint64_t helper(int x)\n{\n    return x;\n}\n\nvoid plain() {}\n"
+    )
+    labels = _labels(p)
+    assert "MYLIB_EXPORT" not in labels
+    assert "helper()" in labels and "plain()" in labels
+
+
+def test_cpp_export_decl_macro_is_narrow_and_offset_preserving():
+    from graphify.extract import _normalize_cpp_export_macros
+
+    src = b"MYLIB_EXPORT uint64_t f(int);\nFOO_API int g();\nRETURN value;\n  MASK x;\n"
+    out = _normalize_cpp_export_macros(src)
+    assert len(out) == len(src) and out.count(b"\n") == src.count(b"\n")
+    assert b"MYLIB_EXPORT" not in out and b"FOO_API" not in out
+    assert b"RETURN value;" in out and b"MASK x;" in out
